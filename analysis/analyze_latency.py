@@ -137,7 +137,7 @@ def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Pat
     mann_whitney = stats.mannwhitneyu(powersync, electricsql, alternative="two-sided")
     ci_low, ci_high = bootstrap_mean_difference(powersync, electricsql)
     rank_biserial = rank_biserial_from_u(float(mann_whitney.statistic), len(powersync), len(electricsql))
-    regression_difference = float(powersync.mean() - electricsql.mean())
+    mean_difference = float(powersync.mean() - electricsql.mean())
     correlation_iteration = data.groupby("engine").apply(lambda group: group["iteration"].corr(group["latency_ms"]), include_groups=False)
 
     summary_markdown = summary.to_markdown(index=False, floatfmt=".3f")
@@ -178,7 +178,7 @@ The primary model is a two-group linear model:
 
 With PowerSync as the reference group, the engine effect is the difference between group means. Because the two groups may have different variances, Welch's two-sample t-test is used for the mean difference. The Mann-Whitney U test is included as a distribution-robust comparison of ranks.
 
-- Mean difference, PowerSync minus ElectricSQL: **{regression_difference:.3f} ms**
+- Mean difference, PowerSync minus ElectricSQL: **{mean_difference:.3f} ms**
 - Bootstrap 95% CI for mean difference: **[{ci_low:.3f}, {ci_high:.3f}] ms**
 - Welch t-test: **t = {welch.statistic:.3f}, p = {welch.pvalue:.6g}**
 - Mann-Whitney U test: **U = {mann_whitney.statistic:.1f}, p = {mann_whitney.pvalue:.6g}**
