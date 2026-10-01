@@ -19,12 +19,12 @@ services:
     depends_on:
       - postgres
     environment:
-      POWERSYNC_PG_URI: postgresql://powersync_role:${POWERSYNC_PG_PASSWORD}@postgres:5432/testdb
-      POWERSYNC_STORAGE_URI: postgresql://powersync_storage_user:${POWERSYNC_STORAGE_PASSWORD}@postgres:5432/powersync_storage
-      POWERSYNC_JWT_SECRET: ${POWERSYNC_JWT_SECRET}
+      PS_POWERSYNC_PG_URI: postgresql://powersync_role:${POWERSYNC_PG_PASSWORD}@postgres:5432/testdb
+      PS_POWERSYNC_STORAGE_URI: postgresql://powersync_storage_user:${POWERSYNC_STORAGE_PASSWORD}@postgres:5432/powersync_storage
+      PS_POWERSYNC_JWT_SECRET: ${POWERSYNC_JWT_SECRET}
     ports:
       - "8080:8080"
     volumes:
       - ./service.yaml:/config/service.yaml:ro
       - ./sync-config.yaml:/config/sync-config.yaml:ro
-    command: ["/config/service.yaml"]
+    command: ["start", "--config-path", "/config/service.yaml"]
