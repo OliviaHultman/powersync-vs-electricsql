@@ -1,0 +1,24 @@
+replication:
+  connections:
+    - type: postgresql
+      uri: !env POWERSYNC_PG_URI
+      sslmode: disable # local/private network only
+
+storage:
+  type: postgresql
+  uri: !env POWERSYNC_STORAGE_URI
+  sslmode: disable # local/private network only
+
+port: 8080
+
+sync_config:
+  path: /config/sync-config.yaml
+
+client_auth:
+  audience: ['http://localhost:8080']
+  jwks:
+    keys:
+      - kty: 'oct'
+        alg: 'HS256'
+        k: !env POWERSYNC_JWT_SECRET
+        kid: 'dev-key-1'

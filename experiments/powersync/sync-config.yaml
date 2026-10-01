@@ -1,0 +1,8 @@
+config:
+  edition: 3
+streams:
+  shared_data:
+    # Syncs the same data to all clients - no per-user filtering needed for this experiment.
+    auto_subscribe: true
+    queries:
+      - SELECT * FROM events

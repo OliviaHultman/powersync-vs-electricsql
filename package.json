@@ -1,0 +1,10 @@
+{
+  "name": "sync-latency-experiment",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "orchestrator",
+    "experiments/powersync/client",
+    "experiments/electricsql/client"
+  ]
+}

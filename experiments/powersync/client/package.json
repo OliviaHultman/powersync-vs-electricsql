@@ -1,0 +1,17 @@
+{
+  "name": "@sync-experiment/powersync-client",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@powersync/node": "^0.12.0",
+    "better-sqlite3": "^11.3.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}

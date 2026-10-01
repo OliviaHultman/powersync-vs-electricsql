@@ -1,0 +1,30 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: testdb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POWERSYNC_PG_PASSWORD: ${POWERSYNC_PG_PASSWORD}
+      POWERSYNC_STORAGE_PASSWORD: ${POWERSYNC_STORAGE_PASSWORD}
+    command: ["postgres", "-c", "wal_level=logical"]
+    ports:
+      - "5433:5432"
+    volumes:
+      - ../../shared/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./init-powersync.sh:/docker-entrypoint-initdb.d/02-init-powersync.sh:ro
+
+  powersync:
+    image: journeyapps/powersync-service:latest
+    depends_on:
+      - postgres
+    environment:
+      POWERSYNC_PG_URI: postgresql://powersync_role:${POWERSYNC_PG_PASSWORD}@postgres:5432/testdb
+      POWERSYNC_STORAGE_URI: postgresql://powersync_storage_user:${POWERSYNC_STORAGE_PASSWORD}@postgres:5432/powersync_storage
+      POWERSYNC_JWT_SECRET: ${POWERSYNC_JWT_SECRET}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./service.yaml:/config/service.yaml:ro
+      - ./sync-config.yaml:/config/sync-config.yaml:ro
+    command: ["/config/service.yaml"]
