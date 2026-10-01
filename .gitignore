@@ -3,5 +3,4 @@ dist/
 *.db
 *.db-*
 *.ndjson
-results/*.csv
 .env

@@ -12,6 +12,8 @@ interface Args {
   resultsFile: string;
   outputFile: string;
   delayMs: number;
+  pollMs: number;
+  warmup: number;
 }
 
 function parseArgs(): Args {
@@ -24,7 +26,7 @@ function parseArgs(): Args {
   const engine = get('engine') as Engine | undefined;
   if (engine !== 'powersync' && engine !== 'electricsql') {
     throw new Error(
-      'Usage: tsx run-experiment.ts --engine powersync|electricsql [--iterations N] [--delayMs N] [--pg CONNECTION_STRING] [--resultsFile PATH] [--outputFile PATH]'
+      'Usage: tsx run-experiment.ts --engine powersync|electricsql [--iterations N] [--warmup N] [--delayMs N] [--pollMs N] [--pg CONNECTION_STRING] [--resultsFile PATH] [--outputFile PATH]'
     );
   }
 
@@ -40,6 +42,8 @@ function parseArgs(): Args {
     resultsFile: get('resultsFile', `../results/${engine}-received.ndjson`)!,
     outputFile: get('outputFile', `../results/${engine}-latency-${Date.now()}.csv`)!,
     delayMs: Number(get('delayMs', '500')),
+    pollMs: Number(get('pollMs', '5')),
+    warmup: Number(get('warmup', '5')),
   };
 }
 
@@ -54,12 +58,17 @@ function findReceivedAt(resultsFile: string, id: string): number | undefined {
   return undefined;
 }
 
-async function waitForRow(resultsFile: string, id: string, timeoutMs = 30_000): Promise<number> {
+async function waitForRow(
+  resultsFile: string,
+  id: string,
+  pollMs: number,
+  timeoutMs = 30_000
+): Promise<number> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     const receivedAt = findReceivedAt(resultsFile, id);
     if (receivedAt !== undefined) return receivedAt;
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(`Timed out waiting for row ${id} to sync to the client`);
 }
@@ -72,7 +81,18 @@ async function main(): Promise<void> {
   mkdirSync(dirname(args.outputFile), { recursive: true });
   appendFileSync(args.outputFile, 'iteration,id,inserted_at_ms,received_at_ms,latency_ms\n');
 
-  console.log(`Running ${args.iterations} iterations against engine=${args.engine}`);
+  console.log(
+    `Running ${args.iterations} iterations against engine=${args.engine} (warmup=${args.warmup}, pollMs=${args.pollMs})`
+  );
+
+  for (let i = 0; i < args.warmup; i++) {
+    const id = randomUUID();
+    await pg.query(
+      "INSERT INTO events (id, payload, inserted_at) VALUES ($1, $2, now())",
+      [id, `warmup-payload-${i}`]
+    );
+    await waitForRow(args.resultsFile, id, args.pollMs);
+  }
 
   for (let i = 0; i < args.iterations; i++) {
     const id = randomUUID();
@@ -82,7 +102,7 @@ async function main(): Promise<void> {
     );
     const insertedAtMs = Number(rows[0].inserted_at_ms);
 
-    const receivedAtMs = await waitForRow(args.resultsFile, id);
+    const receivedAtMs = await waitForRow(args.resultsFile, id, args.pollMs);
     const latencyMs = receivedAtMs - insertedAtMs;
 
     appendFileSync(args.outputFile, `${i},${id},${insertedAtMs},${receivedAtMs},${latencyMs}\n`);
