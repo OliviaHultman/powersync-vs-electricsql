@@ -94,7 +94,8 @@ def make_summary(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def make_plots(data: pd.DataFrame, output_dir: Path) -> None:
-    colors = {"PowerSync": "#2f6fed", "ElectricSQL": "#e46b35"}
+    colors = {"PowerSync": "#05235e", "ElectricSQL": "#e46b35"}
+    markers = {"PowerSync": "o", "ElectricSQL": "s"}
     order = ["PowerSync", "ElectricSQL"]
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
@@ -118,7 +119,7 @@ def make_plots(data: pd.DataFrame, output_dir: Path) -> None:
     fig, ax = plt.subplots(figsize=(11, 5))
     for engine in order:
         group = data.loc[data["engine"] == engine]
-        ax.plot(group["iteration"], group["latency_ms"], marker=".", linewidth=1, alpha=0.7, label=engine, color=colors[engine])
+        ax.plot(group["iteration"], group["latency_ms"], marker=markers[engine], linewidth=1, alpha=0.7, label=engine, color=colors[engine])
     ax.set_title("Latency by iteration")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Latency (ms)")
