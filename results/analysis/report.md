@@ -4,7 +4,7 @@
 
 The analysis loaded the newest latency CSV with at least 20 observations for each engine:
 
-- PowerSync: `results/powersync-latency-1790845451144.csv`
+- PowerSync: `results/powersync-latency-1790897793405.csv`
 - ElectricSQL: `results/electricsql-latency-1790845542098.csv`
 
 The CSV fields were parsed as numeric where appropriate. Rows with missing, duplicated, non-positive, or non-numeric measurements would stop the analysis. The selected files contain 100 PowerSync and 100 ElectricSQL observations, with no validation failures.
@@ -19,7 +19,7 @@ The CSV fields were parsed as numeric where appropriate. Rows with missing, dupl
 
 | engine      |   n |   mean_ms |   std_ms |   median_ms |   min_ms |   p95_ms |   max_ms |   missing_values |   outliers_iqr |
 |:------------|----:|----------:|---------:|------------:|---------:|---------:|---------:|-----------------:|---------------:|
-| PowerSync   | 100 |    72.025 |    2.568 |      71.907 |   64.581 |   75.151 |   84.115 |                0 |              4 |
+| PowerSync   | 100 |    44.353 |    3.887 |      43.827 |   35.503 |   49.962 |   63.210 |                0 |              5 |
 | ElectricSQL | 100 |    15.887 |    2.072 |      15.929 |   11.273 |   19.096 |   23.801 |                0 |              1 |
 
 The latency measurements are positive and complete. The iteration-to-latency correlations were:
@@ -27,7 +27,7 @@ The latency measurements are positive and complete. The iteration-to-latency cor
 ```text
 engine
 ElectricSQL   -0.088756
-PowerSync     -0.104318
+PowerSync     -0.123719
 ```
 
 The figures show the group distributions, outliers, and whether latency drifts over the run. The p95 is close to the median for both groups, so this run does not show severe tail instability. The polling-based result-file check adds a small measurement-resolution component; it is the same for both engines after the `pollMs=5` improvement.
@@ -40,10 +40,10 @@ The primary model is a two-group linear model:
 
 With PowerSync as the reference group, the engine effect is the difference between group means. Because the two groups may have different variances, Welch's two-sample t-test is used for the mean difference. The Mann-Whitney U test is included as a distribution-robust comparison of ranks.
 
-- Mean difference, PowerSync minus ElectricSQL: **56.139 ms**
-- Bootstrap 95% CI for mean difference: **[55.488, 56.773] ms**
-- Welch t-test: **t = 170.120, p = 3.49084e-209**
-- Mann-Whitney U test: **U = 10000.0, p = 2.562e-34**
+- Mean difference, PowerSync minus ElectricSQL: **28.467 ms**
+- Bootstrap 95% CI for mean difference: **[27.641, 29.330] ms**
+- Welch t-test: **t = 64.620, p = 5.93902e-112**
+- Mann-Whitney U test: **U = 10000.0, p = 2.56214e-34**
 - Rank-biserial effect size (positive means higher PowerSync latency): **1.000**
 
 Both tests address the narrow question of whether the observed latency distributions differ under this local setup. They do not establish that one technology is universally faster.

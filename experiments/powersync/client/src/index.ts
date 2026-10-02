@@ -38,7 +38,7 @@ for (const row of await db.getAll<{ id: string }>('SELECT id FROM events')) {
 
 console.log('PowerSync client ready, watching for new events...');
 
-for await (const result of db.watch('SELECT id FROM events')) {
+for await (const result of db.watch('SELECT id FROM events', [], { throttleMs: 0 })) {
   const rows = (result.rows?._array ?? []) as { id: string }[];
   for (const row of rows) {
     if (!seen.has(row.id)) {
