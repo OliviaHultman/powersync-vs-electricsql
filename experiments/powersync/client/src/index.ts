@@ -2,7 +2,7 @@ import { PowerSyncDatabase } from '@powersync/node';
 import { AppSchema } from './schema.js';
 import { logReceived } from '../../../../shared/client/resultLogger.js';
 
-const POWERSYNC_URL = process.env.POWERSYNC_URL ?? 'http://localhost:8080';
+const POWERSYNC_URL = process.env.POWERSYNC_URL ?? 'http://localhost:8081';
 const POWERSYNC_TOKEN = process.env.POWERSYNC_TOKEN;
 const RESULTS_FILE = process.env.RESULTS_FILE ?? '../../../results/powersync-received.ndjson';
 

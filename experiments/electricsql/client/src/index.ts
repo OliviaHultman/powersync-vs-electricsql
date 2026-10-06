@@ -3,7 +3,7 @@ import { ShapeStream } from '@electric-sql/client';
 import type { ChangeMessage, Message } from '@electric-sql/client';
 import { logReceived } from '../../../../shared/client/resultLogger.js';
 
-const ELECTRIC_URL = process.env.ELECTRIC_URL ?? 'http://localhost:3000/v1/shape';
+const ELECTRIC_URL = process.env.ELECTRIC_URL ?? 'http://localhost:3001/v1/shape';
 const RESULTS_FILE = process.env.RESULTS_FILE ?? '../../../results/electricsql-received.ndjson';
 
 type EventRow = { id: string; payload: string; inserted_at: string };

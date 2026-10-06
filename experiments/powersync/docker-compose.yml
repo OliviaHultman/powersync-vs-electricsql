@@ -28,3 +28,14 @@ services:
       - ./service.yaml:/config/service.yaml:ro
       - ./sync-config.yaml:/config/sync-config.yaml:ro
     command: ["start", "--config-path", "/config/service.yaml"]
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    depends_on:
+      - powersync
+    ports:
+      - "8081:8081"
+      - "8474:8474"
+    volumes:
+      - ./toxiproxy.json:/config/toxiproxy.json:ro
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]

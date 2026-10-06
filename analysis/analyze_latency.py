@@ -39,13 +39,23 @@ def load_data(path: Path, engine: str) -> pd.DataFrame:
     missing = REQUIRED_COLUMNS - set(frame.columns)
     if missing:
         raise ValueError(f"{path} is missing columns: {sorted(missing)}")
+    if "network_latency_ms" not in frame:
+        frame["network_latency_ms"] = 0
 
-    numeric_columns = ["iteration", "inserted_at_ms", "received_at_ms", "latency_ms"]
+    numeric_columns = [
+        "iteration",
+        "inserted_at_ms",
+        "received_at_ms",
+        "latency_ms",
+        "network_latency_ms",
+    ]
     for column in numeric_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
     if frame[numeric_columns].isna().any().any():
         raise ValueError(f"{path} contains missing or non-numeric measurements")
+    if (frame["network_latency_ms"] < 0).any():
+        raise ValueError(f"{path} contains negative network latency settings")
     if frame["id"].duplicated().any():
         raise ValueError(f"{path} contains duplicate event IDs")
     if (frame["latency_ms"] <= 0).any():
@@ -74,11 +84,14 @@ def rank_biserial_from_u(u: float, n_a: int, n_b: int) -> float:
 
 def make_summary(data: pd.DataFrame) -> pd.DataFrame:
     rows = []
-    for engine, group in data.groupby("engine", sort=False):
+    for (engine, network_latency_ms), group in data.groupby(
+        ["engine", "network_latency_ms"], sort=False
+    ):
         values = group["latency_ms"]
         rows.append(
             {
                 "engine": engine,
+                "network_latency_ms": network_latency_ms,
                 "n": len(values),
                 "mean_ms": values.mean(),
                 "std_ms": values.std(ddof=1),
@@ -93,7 +106,7 @@ def make_summary(data: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def make_plots(data: pd.DataFrame, output_dir: Path) -> None:
+def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path) -> None:
     colors = {"PowerSync": "#05235e", "ElectricSQL": "#e46b35"}
     markers = {"PowerSync": "o", "ElectricSQL": "s"}
     order = ["PowerSync", "ElectricSQL"]
@@ -129,17 +142,63 @@ def make_plots(data: pd.DataFrame, output_dir: Path) -> None:
     fig.savefig(output_dir / "latency-by-iteration.png", dpi=180)
     plt.close(fig)
 
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for engine in order:
+        grouped = network_data.loc[network_data["engine"] == engine].groupby(
+            "network_latency_ms"
+        )["latency_ms"]
+        means = grouped.mean()
+        errors = grouped.sem().fillna(0)
+        ax.errorbar(
+            means.index,
+            means.values,
+            yerr=errors.values,
+            marker=markers[engine],
+            capsize=4,
+            linewidth=1.5,
+            label=engine,
+            color=colors[engine],
+        )
+    ax.set_title("Synchronization latency by simulated network latency")
+    ax.set_xlabel("Added downstream network latency (ms)")
+    ax.set_ylabel("Synchronization latency (ms)")
+    ax.legend()
+    ax.grid(alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_dir / "latency-by-network-latency.png", dpi=180)
+    plt.close(fig)
+
 
 def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Path], output_dir: Path) -> None:
-    powersync = data.loc[data["engine"] == "PowerSync", "latency_ms"].to_numpy()
-    electricsql = data.loc[data["engine"] == "ElectricSQL", "latency_ms"].to_numpy()
+    baseline_latency = float(data["network_latency_ms"].min())
+    baseline = data.loc[data["network_latency_ms"] == baseline_latency]
+    powersync = baseline.loc[baseline["engine"] == "PowerSync", "latency_ms"].to_numpy()
+    electricsql = baseline.loc[baseline["engine"] == "ElectricSQL", "latency_ms"].to_numpy()
 
+    if len(powersync) < 2 or len(electricsql) < 2:
+        raise ValueError(
+            f"At least two baseline observations per engine are required at {baseline_latency:g}ms"
+        )
     welch = stats.ttest_ind(powersync, electricsql, equal_var=False)
     mann_whitney = stats.mannwhitneyu(powersync, electricsql, alternative="two-sided")
     ci_low, ci_high = bootstrap_mean_difference(powersync, electricsql)
     rank_biserial = rank_biserial_from_u(float(mann_whitney.statistic), len(powersync), len(electricsql))
     mean_difference = float(powersync.mean() - electricsql.mean())
-    correlation_iteration = data.groupby("engine").apply(lambda group: group["iteration"].corr(group["latency_ms"]), include_groups=False)
+    correlation_iteration = baseline.groupby("engine").apply(
+        lambda group: group["iteration"].corr(group["latency_ms"]),
+        include_groups=False,
+    )
+    network_trends = []
+    for engine, group in data.groupby("engine", sort=False):
+        if group["network_latency_ms"].nunique() < 2:
+            network_trends.append(f"- **{engine}:** at least two network latency levels are required.")
+            continue
+        trend = stats.linregress(group["network_latency_ms"], group["latency_ms"])
+        network_trends.append(
+            f"- **{engine}:** {trend.slope:.3f} ms additional synchronization latency per "
+            f"1 ms imposed downstream delay (R² = {trend.rvalue**2:.3f}, p = {trend.pvalue:.6g})."
+        )
+    network_trend_report = "\n".join(network_trends)
 
     summary_markdown = summary.to_markdown(index=False, floatfmt=".3f")
     report = f"""# Latency analysis: PowerSync vs ElectricSQL
@@ -151,29 +210,29 @@ The analysis loaded the newest latency CSV with at least 20 observations for eac
 - PowerSync: `{paths['PowerSync']}`
 - ElectricSQL: `{paths['ElectricSQL']}`
 
-The CSV fields were parsed as numeric where appropriate. Rows with missing, duplicated, non-positive, or non-numeric measurements would stop the analysis. The selected files contain {len(powersync)} PowerSync and {len(electricsql)} ElectricSQL observations, with no validation failures.
+The CSV fields were parsed as numeric where appropriate. Rows with missing, duplicated, non-positive, or non-numeric measurements would stop the analysis. The selected files contain {len(powersync)} PowerSync and {len(electricsql)} ElectricSQL baseline observations, with no validation failures.
 
 ## Variables
 
-- **Independent variable:** `engine`, a categorical two-level factor (`PowerSync` or `ElectricSQL`). The experiment holds the database schema, payload pattern, iteration count, client machine, and orchestrator procedure constant.
-- **Controlled variables:** `iteration`, `delayMs`, client/server host, Docker configuration, and experiment code. `iteration` is an ordering variable, not a causal treatment.
+- **Independent variables:** `engine` (`PowerSync` or `ElectricSQL`) and `network_latency_ms`, the fixed one-way delay added to server-to-client traffic by Toxiproxy.
+- **Controlled variables:** database schema, payload pattern, client/server host, Docker configuration, warmup, polling interval, and experiment procedure.
 - **Dependent variable:** `latency_ms`, the elapsed time from the Postgres insert timestamp to the timestamp at which the client records the synchronized event. It is expected to be numeric, positive, right-skewable, and independent across event IDs within a run.
 
-## Exploratory data analysis
+## Results by engine and network latency
 
 {summary_markdown}
 
-The latency measurements are positive and complete. The iteration-to-latency correlations were:
+Each row summarizes one engine and one network latency level. The baseline engine comparison below uses the lowest configured network latency ({baseline_latency:.0f} ms). The iteration-to-latency correlations at baseline were:
 
 ```text
 {correlation_iteration.to_string()}
 ```
 
-The figures show the group distributions, outliers, and whether latency drifts over the run. The p95 is close to the median for both groups, so this run does not show severe tail instability. The polling-based result-file check adds a small measurement-resolution component; it is the same for both engines after the `pollMs=5` improvement.
+The per-level plot shows mean synchronization latency with standard-error bars. The result-file polling interval adds measurement resolution equally across treatment levels when `pollMs` is held constant.
 
-## Statistical analysis
+## Research question 1: engine comparison at baseline
 
-The primary model is a two-group linear model:
+The primary comparison is at the lowest configured network delay:
 
 `latency_ms = intercept + engine_effect + error`
 
@@ -187,17 +246,26 @@ With PowerSync as the reference group, the engine effect is the difference betwe
 
 Both tests address the narrow question of whether the observed latency distributions differ under this local setup. They do not establish that one technology is universally faster.
 
+## Research question 2: effect of increased network latency
+
+A separate linear trend is estimated for each engine across all configured delay levels:
+
+{network_trend_report}
+
+A positive slope means synchronization latency increased as the imposed server-to-client delay increased. This fixed downstream delay models the path on which synchronized changes reach the client; it is not a general model of Internet conditions.
+
 ## Visual aids
 
-- [Latency distributions](latency-distributions.png)
-- [Latency by iteration](latency-by-iteration.png)
+- [Baseline latency distributions](latency-distributions.png)
+- [Baseline latency by iteration](latency-by-iteration.png)
+- [Latency by simulated network latency](latency-by-network-latency.png)
 - [Summary table](summary.csv)
 
 ## Interpretation and limitations
 
-The result supports a lower latency for ElectricSQL in this setup, while PowerSync has a higher central latency. The comparison is observational and local: each engine uses a separate Postgres and service container, and the measurement includes the respective synchronization architecture plus client-side processing. The result-file polling loop and Docker scheduling are also part of the measured environment.
+The comparison is local: each engine uses a separate Postgres and service container, and measurements include synchronization architecture, client processing, polling resolution, and Docker scheduling.
 
-For stronger evidence, repeat the experiment across several independent runs, preserve the same warmup and polling settings, report run-level confidence intervals, and compare medians and p95 values in addition to means.
+For stronger evidence, repeat each sweep, preserve the same delay levels, warmup, and polling settings, and compare run-level effects in addition to per-event measurements.
 """
     (output_dir / "report.md").write_text(report, encoding="utf-8")
 
@@ -211,9 +279,19 @@ def main() -> None:
         [load_data(powersync_path, "PowerSync"), load_data(electricsql_path, "ElectricSQL")],
         ignore_index=True,
     )
+    levels_by_engine = {
+        engine: set(group["network_latency_ms"])
+        for engine, group in data.groupby("engine", sort=False)
+    }
+    if levels_by_engine["PowerSync"] != levels_by_engine["ElectricSQL"]:
+        raise ValueError(
+            "PowerSync and ElectricSQL CSVs must contain the same network latency levels"
+        )
+    baseline_latency = float(data["network_latency_ms"].min())
+    baseline = data.loc[data["network_latency_ms"] == baseline_latency]
     summary = make_summary(data)
     summary.to_csv(args.output_dir / "summary.csv", index=False)
-    make_plots(data, args.output_dir)
+    make_plots(baseline, data, args.output_dir)
     write_report(data, summary, {"PowerSync": powersync_path, "ElectricSQL": electricsql_path}, args.output_dir)
     print(f"PowerSync input: {powersync_path}")
     print(f"ElectricSQL input: {electricsql_path}")

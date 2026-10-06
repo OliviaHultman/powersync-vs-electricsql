@@ -20,3 +20,14 @@ services:
       ELECTRIC_INSECURE: "true"
     ports:
       - "3000:3000"
+
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    depends_on:
+      - electric
+    ports:
+      - "3001:3001"
+      - "8475:8474"
+    volumes:
+      - ./toxiproxy.json:/config/toxiproxy.json:ro
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]

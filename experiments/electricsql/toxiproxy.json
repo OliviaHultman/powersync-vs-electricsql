@@ -1,0 +1,8 @@
+[
+  {
+    "name": "electricsql",
+    "listen": "0.0.0.0:3001",
+    "upstream": "electric:3000",
+    "enabled": true
+  }
+]
