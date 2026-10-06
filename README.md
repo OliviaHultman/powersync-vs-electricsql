@@ -42,8 +42,8 @@ Start the ElectricSQL client from the repository root:
 npm run start --workspace @sync-experiment/electricsql-client
 ```
 
-Run one sweep per engine. The default levels are listed explicitly here to
-make the experiment configuration clear:
+Run one sweep per engine with the same explicitly selected network-latency
+levels (`0`, `25`, `50`, and `100` ms):
 
 ```sh
 npm run start --workspace @sync-experiment/orchestrator -- --engine powersync --networkLatenciesMs 0,25,50,100
