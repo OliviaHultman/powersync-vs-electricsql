@@ -41,11 +41,16 @@ Start the ElectricSQL client from the repository root:
 npm run start --workspace @sync-experiment/electricsql-client
 ```
 
-Run one sweep per engine with the same explicitly selected network-latency
-levels (`0`, `25`, `50`, and `100` ms):
+Run three sweeps per engine with the same network-latency levels (`0`, `25`,
+`50`, and `100` ms), with the default warmup of 30 inserts per level (`--warmup N` changes it) and reversing the order in one sweep
+so time effects are not confounded with the delay level:
 
 ```sh
 npm run start --workspace @sync-experiment/orchestrator -- --engine powersync --networkLatenciesMs 0,25,50,100
+npm run start --workspace @sync-experiment/orchestrator -- --engine powersync --networkLatenciesMs 100,50,25,0
+npm run start --workspace @sync-experiment/orchestrator -- --engine powersync --networkLatenciesMs 0,25,50,100
+npm run start --workspace @sync-experiment/orchestrator -- --engine electricsql --networkLatenciesMs 0,25,50,100
+npm run start --workspace @sync-experiment/orchestrator -- --engine electricsql --networkLatenciesMs 100,50,25,0
 npm run start --workspace @sync-experiment/orchestrator -- --engine electricsql --networkLatenciesMs 0,25,50,100
 ```
 
@@ -61,8 +66,10 @@ Analyze the latest CSV from each engine:
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -r analysis/requirements.txt
-python analysis/analyze_latency.py
+python analysis/analyze_latency.py --runs 3
 ```
+
+`--runs N` combines the N newest sweeps per engine into one dataset (default 1).
 
 The virtual environment only needs to be created and populated once. Next time,
 run `source .venv/bin/activate` before `python analysis/analyze_latency.py`.

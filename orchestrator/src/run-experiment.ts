@@ -44,7 +44,7 @@ function parseArgs(): Args {
     outputFile: get('outputFile', `../results/${engine}-latency-${Date.now()}.csv`)!,
     delayMs: Number(get('delayMs', '500')),
     pollMs: Number(get('pollMs', '5')),
-    warmup: Number(get('warmup', '5')),
+    warmup: Number(get('warmup', '30')),
     networkLatenciesMs: parseNetworkLatencies(get('networkLatenciesMs', '0')!),
   };
 }
@@ -173,13 +173,15 @@ async function setNetworkLatency(config: ProxyConfig, latencyMs: number): Promis
   }
 }
 
-function findReceivedAt(resultsFile: string, id: string): number | undefined {
+type Received = { receivedAt: number; notifiedAt?: number };
+
+function findReceived(resultsFile: string, id: string): Received | undefined {
   if (!existsSync(resultsFile)) return undefined;
   const lines = readFileSync(resultsFile, 'utf-8').split('\n').filter(Boolean);
   // Search from the end - recent inserts are appended last.
   for (let i = lines.length - 1; i >= 0; i--) {
     const entry = JSON.parse(lines[i]);
-    if (entry.id === id) return entry.receivedAt;
+    if (entry.id === id) return { receivedAt: entry.receivedAt, notifiedAt: entry.notifiedAt ?? undefined };
   }
   return undefined;
 }
@@ -189,11 +191,11 @@ async function waitForRow(
   id: string,
   pollMs: number,
   timeoutMs = 30_000
-): Promise<number> {
+): Promise<Received> {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const receivedAt = findReceivedAt(resultsFile, id);
-    if (receivedAt !== undefined) return receivedAt;
+    const received = findReceived(resultsFile, id);
+    if (received !== undefined) return received;
     await new Promise((resolve) => setTimeout(resolve, pollMs));
   }
   throw new Error(`Timed out waiting for row ${id} to sync to the client`);
@@ -209,7 +211,7 @@ async function main(): Promise<void> {
   mkdirSync(dirname(args.outputFile), { recursive: true });
   writeFileSync(
     args.outputFile,
-    'network_latency_ms,iteration,id,inserted_at_ms,received_at_ms,latency_ms\n'
+    'network_latency_ms,iteration,id,inserted_at_ms,received_at_ms,latency_ms,notified_at_ms\n'
   );
 
   console.log(
@@ -224,26 +226,26 @@ async function main(): Promise<void> {
       for (let i = 0; i < args.warmup; i++) {
         const id = randomUUID();
         await pg.query(
-          "INSERT INTO events (id, payload, inserted_at) VALUES ($1, $2, now())",
-          [id, `warmup-payload-${networkLatencyMs}-${i}`]
+          "INSERT INTO events (id, payload, inserted_at) VALUES ($1, $2, $3)",
+          [id, `warmup-payload-${networkLatencyMs}-${i}`, new Date()]
         );
         await waitForRow(args.resultsFile, id, args.pollMs);
       }
 
       for (let i = 0; i < args.iterations; i++) {
         const id = randomUUID();
-        const { rows } = await pg.query<{ inserted_at_ms: string }>(
-          "INSERT INTO events (id, payload, inserted_at) VALUES ($1, $2, now()) RETURNING extract(epoch from inserted_at) * 1000 AS inserted_at_ms",
-          [id, `test-payload-${networkLatencyMs}-${i}`]
+        const insertedAtMs = Date.now();
+        await pg.query(
+          "INSERT INTO events (id, payload, inserted_at) VALUES ($1, $2, $3)",
+          [id, `test-payload-${networkLatencyMs}-${i}`, new Date(insertedAtMs)]
         );
-        const insertedAtMs = Number(rows[0].inserted_at_ms);
 
-        const receivedAtMs = await waitForRow(args.resultsFile, id, args.pollMs);
+        const { receivedAt: receivedAtMs, notifiedAt } = await waitForRow(args.resultsFile, id, args.pollMs);
         const latencyMs = receivedAtMs - insertedAtMs;
 
         appendFileSync(
           args.outputFile,
-          `${networkLatencyMs},${i},${id},${insertedAtMs},${receivedAtMs},${latencyMs}\n`
+          `${networkLatencyMs},${i},${id},${insertedAtMs},${receivedAtMs},${latencyMs},${notifiedAt ?? ''}\n`
         );
         console.log(`[${i + 1}/${args.iterations}] latency=${latencyMs.toFixed(1)}ms`);
 

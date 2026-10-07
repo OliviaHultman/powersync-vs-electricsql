@@ -21,6 +21,7 @@ const upsert = db.prepare(
   'INSERT INTO events (id, payload, inserted_at) VALUES (@id, @payload, @inserted_at) ' +
     'ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, inserted_at = excluded.inserted_at'
 );
+const exists = db.prepare('SELECT 1 FROM events WHERE id = ?');
 const remove = db.prepare('DELETE FROM events WHERE id = ?');
 
 const stream = new ShapeStream<EventRow>({
@@ -40,8 +41,11 @@ stream.subscribe((messages) => {
 
     const { value, headers } = message;
     if (headers.operation === 'insert') {
+      const notifiedAt = Date.now();
       upsert.run(value);
-      logReceived(RESULTS_FILE, value.id, Date.now());
+      // Read the row back so t1 means "visible in a local read", as for PowerSync.
+      exists.get(value.id);
+      logReceived(RESULTS_FILE, value.id, Date.now(), notifiedAt);
     } else if (headers.operation === 'update') {
       upsert.run(value);
     } else if (headers.operation === 'delete') {

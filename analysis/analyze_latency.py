@@ -21,17 +21,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Analyze PowerSync and ElectricSQL latency CSV files.")
     parser.add_argument("--results-dir", type=Path, default=Path("results"))
     parser.add_argument("--output-dir", type=Path, default=Path("results/analysis"))
-    parser.add_argument("--powersync", type=Path)
-    parser.add_argument("--electricsql", type=Path)
+    parser.add_argument("--powersync", type=Path, nargs="+")
+    parser.add_argument("--electricsql", type=Path, nargs="+")
+    parser.add_argument("--runs", type=int, default=1, help="Number of newest sweeps to pool per engine")
     return parser.parse_args()
 
 
-def latest_csv(results_dir: Path, engine: str) -> Path:
+def latest_csvs(results_dir: Path, engine: str, runs: int) -> list[Path]:
     candidates = sorted(results_dir.glob(f"{engine}-latency-*.csv"), key=lambda path: path.stat().st_mtime, reverse=True)
     candidates = [path for path in candidates if len(pd.read_csv(path)) >= 20]
     if not candidates:
         raise FileNotFoundError(f"No suitable {engine} latency CSV found in {results_dir}")
-    return candidates[0]
+    return candidates[:runs]
 
 
 def load_data(path: Path, engine: str) -> pd.DataFrame:
@@ -132,7 +133,8 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
     fig, ax = plt.subplots(figsize=(11, 5))
     for engine in order:
         group = data.loc[data["engine"] == engine]
-        ax.plot(group["iteration"], group["latency_ms"], marker=markers[engine], linewidth=1, alpha=0.7, label=engine, color=colors[engine])
+        for index, (_, run) in enumerate(group.groupby("source_file", sort=False)):
+            ax.plot(run["iteration"], run["latency_ms"], marker=markers[engine], linewidth=1, alpha=0.7, label=engine if index == 0 else None, color=colors[engine])
     ax.set_title("Latency by iteration")
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Latency (ms)")
@@ -226,10 +228,10 @@ def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Pat
 
 ## Data and preprocessing
 
-The analysis loaded the newest latency CSV with at least 20 observations for each engine:
+The analysis loaded the newest latency CSV file(s) with at least 20 observations for each engine and pooled them when several runs were selected:
 
-- PowerSync: `{paths['PowerSync']}`
-- ElectricSQL: `{paths['ElectricSQL']}`
+- PowerSync: {paths['PowerSync']}
+- ElectricSQL: {paths['ElectricSQL']}
 
 The CSV fields were parsed as numeric where appropriate. Rows with missing, duplicated, non-positive, or non-numeric measurements would stop the analysis. The selected files contain {len(powersync)} PowerSync and {len(electricsql)} ElectricSQL baseline observations, with no validation failures.
 
@@ -294,10 +296,11 @@ For stronger evidence, repeat each sweep, preserve the same delay levels, warmup
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    powersync_path = args.powersync or latest_csv(args.results_dir, "powersync")
-    electricsql_path = args.electricsql or latest_csv(args.results_dir, "electricsql")
+    powersync_paths = args.powersync or latest_csvs(args.results_dir, "powersync", args.runs)
+    electricsql_paths = args.electricsql or latest_csvs(args.results_dir, "electricsql", args.runs)
     data = pd.concat(
-        [load_data(powersync_path, "PowerSync"), load_data(electricsql_path, "ElectricSQL")],
+        [load_data(path, "PowerSync") for path in powersync_paths]
+        + [load_data(path, "ElectricSQL") for path in electricsql_paths],
         ignore_index=True,
     )
     levels_by_engine = {
@@ -313,9 +316,12 @@ def main() -> None:
     summary = make_summary(data)
     summary.to_csv(args.output_dir / "summary.csv", index=False)
     make_plots(baseline, data, args.output_dir)
-    write_report(data, summary, {"PowerSync": powersync_path, "ElectricSQL": electricsql_path}, args.output_dir)
-    print(f"PowerSync input: {powersync_path}")
-    print(f"ElectricSQL input: {electricsql_path}")
+    write_report(data, summary, {
+            "PowerSync": ", ".join(f"`{path}`" for path in powersync_paths),
+            "ElectricSQL": ", ".join(f"`{path}`" for path in electricsql_paths),
+        }, args.output_dir)
+    print(f"PowerSync inputs: {', '.join(map(str, powersync_paths))}")
+    print(f"ElectricSQL inputs: {', '.join(map(str, electricsql_paths))}")
     print(summary.to_string(index=False, float_format=lambda value: f"{value:.3f}"))
     print(f"Analysis written to {args.output_dir}")
 

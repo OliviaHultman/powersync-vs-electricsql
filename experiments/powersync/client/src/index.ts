@@ -38,12 +38,27 @@ for (const row of await db.getAll<{ id: string }>('SELECT id FROM events')) {
 
 console.log('PowerSync client ready, watching for new events...');
 
-for await (const result of db.watch('SELECT id FROM events', [], { throttleMs: 0 })) {
-  const rows = (result.rows?._array ?? []) as { id: string }[];
-  for (const row of rows) {
-    if (!seen.has(row.id)) {
-      seen.add(row.id);
-      logReceived(RESULTS_FILE, row.id, Date.now());
-    }
-  }
-}
+// Only the most recent rows are read per change notification, so the cost of noticing a
+// change does not grow with the table size.
+const RECENT_ROWS = 5;
+
+db.onChangeWithCallback(
+  {
+    async onChange() {
+      const notifiedAt = Date.now();
+      const rows = await db.getAll<{ id: string }>(
+        'SELECT id FROM events ORDER BY inserted_at DESC LIMIT ?',
+        [RECENT_ROWS]
+      );
+      const detectedAt = Date.now();
+      for (const row of rows) {
+        if (!seen.has(row.id)) {
+          seen.add(row.id);
+          logReceived(RESULTS_FILE, row.id, detectedAt, notifiedAt);
+        }
+      }
+    },
+    onError: (error) => console.error('PowerSync change listener failed', error),
+  },
+  { tables: ['events'], throttleMs: 0 }
+);

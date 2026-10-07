@@ -2,7 +2,7 @@
 
 ## Data and preprocessing
 
-The analysis loaded the newest latency CSV with at least 20 observations for each engine:
+The analysis loaded the newest latency CSV file(s) with at least 20 observations for each engine and pooled them when several runs were selected:
 
 - PowerSync: `results/powersync-latency-1791333907825.csv`
 - ElectricSQL: `results/electricsql-latency-1791334513081.csv`
