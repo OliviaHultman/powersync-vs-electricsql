@@ -35,7 +35,7 @@ def latest_csvs(results_dir: Path, engine: str, runs: int) -> list[Path]:
     return candidates[:runs]
 
 
-def load_data(path: Path, engine: str) -> pd.DataFrame:
+def load_data(path: Path, engine: str, run: int) -> pd.DataFrame:
     frame = pd.read_csv(path)
     missing = REQUIRED_COLUMNS - set(frame.columns)
     if missing:
@@ -61,8 +61,12 @@ def load_data(path: Path, engine: str) -> pd.DataFrame:
         raise ValueError(f"{path} contains duplicate event IDs")
     if (frame["latency_ms"] <= 0).any():
         raise ValueError(f"{path} contains non-positive latency values")
+    # Older CSVs have no notified_at_ms; those rows are left out of the latency breakdown.
+    if "notified_at_ms" in frame:
+        frame["notified_at_ms"] = pd.to_numeric(frame["notified_at_ms"], errors="coerce")
 
     frame["engine"] = engine
+    frame["run"] = run
     frame["source_file"] = str(path)
     return frame
 
@@ -81,6 +85,62 @@ def bootstrap_mean_difference(a: np.ndarray, b: np.ndarray, seed: int = 42, samp
 
 def rank_biserial_from_u(u: float, n_a: int, n_b: int) -> float:
     return float((2 * u) / (n_a * n_b) - 1)
+
+
+def format_p(p: float) -> str:
+    return "< 0.001" if p < 0.001 else f"= {p:.3f}"
+
+
+def make_run_slopes(data: pd.DataFrame) -> pd.DataFrame:
+    """Fits one latency-vs-delay line per run, so run-to-run variation becomes visible."""
+    rows = []
+    for (engine, run), group in data.groupby(["engine", "run"], sort=False):
+        if group["network_latency_ms"].nunique() < 2:
+            continue
+        trend = stats.linregress(group["network_latency_ms"], group["latency_ms"])
+        level_order = group["network_latency_ms"].drop_duplicates().astype(int).astype(str)
+        rows.append(
+            {
+                "engine": engine,
+                "run": run,
+                "level_order_ms": "->".join(level_order),
+                "slope_ms_per_ms": trend.slope,
+                "source_file": Path(group["source_file"].iloc[0]).name,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def make_run_medians(data: pd.DataFrame) -> pd.DataFrame:
+    """Median latency per engine, delay level and run (one column per run)."""
+    medians = data.groupby(["engine", "network_latency_ms", "run"], sort=False)["latency_ms"].median()
+    table = medians.unstack("run")
+    table.columns = [f"run_{run}_median_ms" for run in table.columns]
+    return table.reset_index()
+
+
+def make_breakdown(data: pd.DataFrame) -> pd.DataFrame:
+    """Splits each latency into delivery (t0 -> client notified) and local (notified -> row read)."""
+    if "notified_at_ms" not in data:
+        return pd.DataFrame()
+    timed = data.dropna(subset=["notified_at_ms"])
+    if timed.empty:
+        return pd.DataFrame()
+    timed = timed.assign(
+        delivery_ms=timed["notified_at_ms"] - timed["inserted_at_ms"],
+        local_ms=timed["received_at_ms"] - timed["notified_at_ms"],
+    )
+    return (
+        timed.groupby(["engine", "network_latency_ms"], sort=False)
+        .agg(
+            n=("latency_ms", "size"),
+            delivery_median_ms=("delivery_ms", "median"),
+            local_median_ms=("local_ms", "median"),
+            local_max_ms=("local_ms", "max"),
+            total_median_ms=("latency_ms", "median"),
+        )
+        .reset_index()
+    )
 
 
 def make_summary(data: pd.DataFrame) -> pd.DataFrame:
@@ -178,7 +238,53 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
     plt.close(fig)
 
 
-def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Path], output_dir: Path) -> None:
+def make_breakdown_plot(breakdown: pd.DataFrame, output_dir: Path) -> None:
+    colors = {"PowerSync": "#05235e", "ElectricSQL": "#e46b35"}
+    order = ["PowerSync", "ElectricSQL"]
+    levels = sorted(breakdown["network_latency_ms"].unique())
+    positions = np.arange(len(levels))
+    width = 0.38
+
+    fig, ax = plt.subplots(figsize=(9, 5))
+    for offset, engine in zip([-width / 2, width / 2], order):
+        rows = breakdown.loc[breakdown["engine"] == engine].set_index("network_latency_ms").loc[levels]
+        ax.bar(
+            positions + offset,
+            rows["delivery_median_ms"],
+            width,
+            color=colors[engine],
+            label=f"{engine} delivery (insert -> client notified)",
+        )
+        ax.bar(
+            positions + offset,
+            rows["local_median_ms"],
+            width,
+            bottom=rows["delivery_median_ms"],
+            color=colors[engine],
+            alpha=0.45,
+            hatch="//",
+            label=f"{engine} local (notified -> row read)",
+        )
+    ax.set_xticks(positions, [f"{level:g}" for level in levels])
+    ax.set_title("Median synchronization latency split into delivery and local part")
+    ax.set_xlabel("Added downstream network latency (ms)")
+    ax.set_ylabel("Median latency (ms)")
+    ax.legend(fontsize=8)
+    ax.grid(axis="y", alpha=0.25)
+    fig.tight_layout()
+    fig.savefig(output_dir / "latency-breakdown.png", dpi=180)
+    plt.close(fig)
+
+
+def write_report(
+    data: pd.DataFrame,
+    summary: pd.DataFrame,
+    run_slopes: pd.DataFrame,
+    run_medians: pd.DataFrame,
+    breakdown: pd.DataFrame,
+    paths: dict[str, Path],
+    output_dir: Path,
+) -> None:
     baseline_latency = float(data["network_latency_ms"].min())
     baseline = data.loc[data["network_latency_ms"] == baseline_latency]
     powersync = baseline.loc[baseline["engine"] == "PowerSync", "latency_ms"].to_numpy()
@@ -219,9 +325,38 @@ def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Pat
         network_trends.append(
             f"- **Slope difference (ElectricSQL minus PowerSync):** {slope_difference:.3f} ms/ms, "
             f"95% CI [{slope_difference - 1.96 * difference_se:.3f}, {slope_difference + 1.96 * difference_se:.3f}], "
-            f"z = {z:.2f}, p = {p_difference:.3g}."
+            f"z = {z:.2f}, p {format_p(p_difference)}."
         )
     network_trend_report = "\n".join(network_trends)
+
+    if run_slopes["run"].nunique() < 2:
+        run_level_report = "Only one run per engine was analyzed, so run-to-run variation cannot be assessed."
+    else:
+        ranges = run_slopes.groupby("engine")["slope_ms_per_ms"].agg(["min", "max"])
+        if ranges.loc["ElectricSQL", "min"] > ranges.loc["PowerSync", "max"]:
+            consistency = "Every ElectricSQL run had a steeper slope than every PowerSync run."
+        elif ranges.loc["PowerSync", "min"] > ranges.loc["ElectricSQL", "max"]:
+            consistency = "Every PowerSync run had a steeper slope than every ElectricSQL run."
+        else:
+            consistency = "The per-run slope ranges of the two engines overlap."
+        run_level_report = f"""The pooled confidence intervals above treat every measurement as independent. As a run-level check, one slope is fitted per run:
+
+{run_slopes.to_markdown(index=False, floatfmt=".3f")}
+
+{consistency}
+
+Median latency per run and delay level (consistency between repeated runs and level orders):
+
+{run_medians.to_markdown(index=False, floatfmt=".1f")}"""
+
+    if breakdown.empty:
+        breakdown_report = "The selected CSV files contain no `notified_at_ms` column, so the latency breakdown is not available."
+    else:
+        breakdown_report = f"""Each latency is split at `notified_at_ms`, the moment the client was told about the change: *delivery* is the time from the insert to the notification, and *local* is the time from the notification until the row was read from the client's SQLite database. Medians of the parts do not necessarily add up exactly to the median of the total.
+
+{breakdown.to_markdown(index=False, floatfmt=".1f")}
+
+The split point is not identical for the two engines. The PowerSync SDK writes the row to SQLite before notifying the client, so that write is part of PowerSync's delivery time, while the ElectricSQL client writes the row itself after being notified, so that write is part of ElectricSQL's local time. Timestamps have 1 ms resolution."""
 
     summary_markdown = summary.to_markdown(index=False, floatfmt=".3f")
     report = f"""# Latency analysis: PowerSync vs ElectricSQL
@@ -251,7 +386,7 @@ Each row summarizes one engine and one network latency level. The baseline engin
 {correlation_iteration.to_string()}
 ```
 
-The per-level plot shows mean synchronization latency with standard-error bars. The result-file polling interval adds measurement resolution equally across treatment levels when `pollMs` is held constant.
+The per-level plot shows the median synchronization latency with a shaded interquartile range (IQR) band. The result-file polling interval adds measurement resolution equally across treatment levels when `pollMs` is held constant.
 
 ## Research question 1: engine comparison at baseline
 
@@ -263,8 +398,8 @@ With PowerSync as the reference group, the engine effect is the difference betwe
 
 - Mean difference, PowerSync minus ElectricSQL: **{mean_difference:.3f} ms**
 - Bootstrap 95% CI for mean difference: **[{ci_low:.3f}, {ci_high:.3f}] ms**
-- Welch t-test: **t = {welch.statistic:.3f}, p = {welch.pvalue:.6g}**
-- Mann-Whitney U test: **U = {mann_whitney.statistic:.1f}, p = {mann_whitney.pvalue:.6g}**
+- Welch t-test: **t = {welch.statistic:.3f}, p {format_p(welch.pvalue)}**
+- Mann-Whitney U test: **U = {mann_whitney.statistic:.1f}, p {format_p(mann_whitney.pvalue)}**
 - Rank-biserial effect size (positive means higher PowerSync latency): **{rank_biserial:.3f}**
 
 Both tests address the narrow question of whether the observed latency distributions differ under this local setup. They do not establish that one technology is universally faster.
@@ -277,12 +412,23 @@ A separate linear trend is estimated for each engine across all configured delay
 
 A positive slope means synchronization latency increased as the imposed server-to-client delay increased. This fixed downstream delay models the path on which synchronized changes reach the client; it is not a general model of Internet conditions.
 
+### Run-level consistency
+
+{run_level_report}
+
+## Latency breakdown: delivery and local part
+
+{breakdown_report}
+
 ## Visual aids
 
 - [Baseline latency distributions](latency-distributions.png)
 - [Baseline latency by iteration](latency-by-iteration.png)
 - [Latency by simulated network latency](latency-by-network-latency.png)
+- [Latency breakdown](latency-breakdown.png)
 - [Summary table](summary.csv)
+- [Slopes per run](run-slopes.csv)
+- [Latency breakdown table](latency-breakdown.csv)
 
 ## Interpretation and limitations
 
@@ -296,11 +442,12 @@ For stronger evidence, repeat each sweep, preserve the same delay levels, warmup
 def main() -> None:
     args = parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    powersync_paths = args.powersync or latest_csvs(args.results_dir, "powersync", args.runs)
-    electricsql_paths = args.electricsql or latest_csvs(args.results_dir, "electricsql", args.runs)
+    # File names end in a creation timestamp, so sorting by name numbers the runs chronologically.
+    powersync_paths = sorted(args.powersync or latest_csvs(args.results_dir, "powersync", args.runs), key=lambda path: path.name)
+    electricsql_paths = sorted(args.electricsql or latest_csvs(args.results_dir, "electricsql", args.runs), key=lambda path: path.name)
     data = pd.concat(
-        [load_data(path, "PowerSync") for path in powersync_paths]
-        + [load_data(path, "ElectricSQL") for path in electricsql_paths],
+        [load_data(path, "PowerSync", run) for run, path in enumerate(powersync_paths, start=1)]
+        + [load_data(path, "ElectricSQL", run) for run, path in enumerate(electricsql_paths, start=1)],
         ignore_index=True,
     )
     levels_by_engine = {
@@ -316,7 +463,14 @@ def main() -> None:
     summary = make_summary(data)
     summary.to_csv(args.output_dir / "summary.csv", index=False)
     make_plots(baseline, data, args.output_dir)
-    write_report(data, summary, {
+    run_slopes = make_run_slopes(data)
+    run_slopes.to_csv(args.output_dir / "run-slopes.csv", index=False)
+    run_medians = make_run_medians(data)
+    breakdown = make_breakdown(data)
+    if not breakdown.empty:
+        breakdown.to_csv(args.output_dir / "latency-breakdown.csv", index=False)
+        make_breakdown_plot(breakdown, args.output_dir)
+    write_report(data, summary, run_slopes, run_medians, breakdown, {
             "PowerSync": ", ".join(f"`{path}`" for path in powersync_paths),
             "ElectricSQL": ", ".join(f"`{path}`" for path in electricsql_paths),
         }, args.output_dir)

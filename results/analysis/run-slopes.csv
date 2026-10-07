@@ -1,0 +1,7 @@
+engine,run,level_order_ms,slope_ms_per_ms,source_file
+PowerSync,1,0->25->50->100,1.015942857142857,powersync-latency-1791388444691.csv
+PowerSync,2,100->50->25->0,1.0130285714285714,powersync-latency-1791388694870.csv
+PowerSync,3,0->25->50->100,1.033062857142857,powersync-latency-1791388945312.csv
+ElectricSQL,1,0->25->50->100,1.049302857142857,electricsql-latency-1791389196319.csv
+ElectricSQL,2,100->50->25->0,1.053302857142857,electricsql-latency-1791389431895.csv
+ElectricSQL,3,0->25->50->100,1.0554171428571428,electricsql-latency-1791389667667.csv

@@ -1,0 +1,9 @@
+engine,network_latency_ms,n,delivery_median_ms,local_median_ms,local_max_ms,total_median_ms
+PowerSync,0,300,45.0,2.0,3,47.0
+PowerSync,25,300,72.0,2.0,3,74.0
+PowerSync,50,300,97.0,2.0,3,99.0
+PowerSync,100,300,147.0,2.0,4,149.0
+ElectricSQL,0,300,11.0,6.0,8,17.0
+ElectricSQL,25,300,38.0,6.0,10,44.0
+ElectricSQL,50,300,64.0,6.0,8,70.0
+ElectricSQL,100,300,115.0,9.0,11,123.0
