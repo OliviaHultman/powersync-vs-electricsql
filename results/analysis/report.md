@@ -111,7 +111,8 @@ The split point is not identical for the two engines. The PowerSync SDK writes t
 
 ## Visual aids
 
-- [Baseline latency distributions](latency-distributions.png)
+- [Baseline latency box plot](latency-boxplot.png)
+- [Baseline latency histogram](latency-histogram.png)
 - [Baseline latency by iteration](latency-by-iteration.png)
 - [Latency by simulated network latency](latency-by-network-latency.png)
 - [Latency breakdown](latency-breakdown.png)

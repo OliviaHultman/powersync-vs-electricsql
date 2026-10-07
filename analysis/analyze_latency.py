@@ -6,7 +6,15 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.lines import Line2D
 from scipy import stats
+
+# Larger default text, so the figures stay readable when scaled to half the page width in the report.
+plt.rcParams.update({"font.size": 12})
+
+# Fixed margins for the 6x5 in figures that are placed side by side in the report, so their plot
+# areas are identical in size (tight_layout would size each one around its own labels).
+HALF_WIDTH_MARGINS = {"left": 0.14, "right": 0.97, "bottom": 0.13, "top": 0.92}
 
 REQUIRED_COLUMNS = {
     "iteration",
@@ -172,22 +180,41 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
     markers = {"PowerSync": "o", "ElectricSQL": "s"}
     order = ["PowerSync", "ElectricSQL"]
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+    fig, ax = plt.subplots(figsize=(6, 5))
     box_data = [data.loc[data["engine"] == engine, "latency_ms"] for engine in order]
-    axes[0].boxplot(box_data, tick_labels=order, showmeans=True)
-    axes[0].set_title("Latency distribution")
-    axes[0].set_ylabel("Latency (ms)")
-    axes[0].grid(axis="y", alpha=0.25)
+    boxes = ax.boxplot(box_data, tick_labels=order, showmeans=True)
+    ax.set_title("Latency distribution")
+    ax.set_xlabel("Sync engine")
+    ax.set_ylabel("Latency (ms)")
+    ax.grid(axis="y", alpha=0.25)
+    # Build the legend from the drawn elements so the symbols always match the plot.
+    median_style = boxes["medians"][0]
+    mean_style = boxes["means"][0]
+    ax.legend(
+        handles=[
+            Line2D([], [], color=median_style.get_color(), label="Median"),
+            Line2D([], [], linestyle="none", marker=mean_style.get_marker(), color=mean_style.get_markerfacecolor(), label="Mean"),
+            Line2D([], [], linestyle="none", marker="o", markerfacecolor="none", color="black", label="Outlier (> 1.5 IQR)"),
+        ],
+        fontsize=10,
+    )
+    fig.subplots_adjust(**HALF_WIDTH_MARGINS)
+    fig.savefig(output_dir / "latency-boxplot.png", dpi=180)
+    plt.close(fig)
 
+    # Shared 1 ms bins, so the bar heights of the two engines are directly comparable.
+    bins = np.arange(np.floor(data["latency_ms"].min()), np.ceil(data["latency_ms"].max()) + 2)
+    fig, ax = plt.subplots(figsize=(6, 5))
     for engine in order:
         values = data.loc[data["engine"] == engine, "latency_ms"]
-        axes[1].hist(values, bins=15, alpha=0.65, label=engine, color=colors[engine])
-    axes[1].set_title("Latency histogram")
-    axes[1].set_xlabel("Latency (ms)")
-    axes[1].set_ylabel("Count")
-    axes[1].legend()
-    axes[1].grid(axis="y", alpha=0.25)
-    fig.savefig(output_dir / "latency-distributions.png", dpi=180)
+        ax.hist(values, bins=bins, alpha=0.65, label=engine, color=colors[engine])
+    ax.set_title("Latency histogram")
+    ax.set_xlabel("Latency (ms)")
+    ax.set_ylabel("Count")
+    ax.legend()
+    ax.grid(axis="y", alpha=0.25)
+    fig.subplots_adjust(**HALF_WIDTH_MARGINS)
+    fig.savefig(output_dir / "latency-histogram.png", dpi=180)
     plt.close(fig)
 
     fig, ax = plt.subplots(figsize=(11, 5))
@@ -204,7 +231,7 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
     fig.savefig(output_dir / "latency-by-iteration.png", dpi=180)
     plt.close(fig)
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(6, 5))
     for engine in order:
         engine_data = network_data.loc[network_data["engine"] == engine]
         grouped = engine_data.groupby("network_latency_ms")["latency_ms"]
@@ -228,12 +255,12 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
             color=colors[engine],
             label=f"{engine} IQR",
         )
-    ax.set_title("Synchronization latency by simulated network latency")
+    ax.set_title("Latency by network delay")
     ax.set_xlabel("Added downstream network latency (ms)")
     ax.set_ylabel("Synchronization latency (ms)")
-    ax.legend()
+    ax.legend(fontsize=10, loc="lower right")
     ax.grid(alpha=0.25)
-    fig.tight_layout()
+    fig.subplots_adjust(**HALF_WIDTH_MARGINS)
     fig.savefig(output_dir / "latency-by-network-latency.png", dpi=180)
     plt.close(fig)
 
@@ -245,7 +272,7 @@ def make_breakdown_plot(breakdown: pd.DataFrame, output_dir: Path) -> None:
     positions = np.arange(len(levels))
     width = 0.38
 
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(6, 5))
     for offset, engine in zip([-width / 2, width / 2], order):
         rows = breakdown.loc[breakdown["engine"] == engine].set_index("network_latency_ms").loc[levels]
         ax.bar(
@@ -253,7 +280,7 @@ def make_breakdown_plot(breakdown: pd.DataFrame, output_dir: Path) -> None:
             rows["delivery_median_ms"],
             width,
             color=colors[engine],
-            label=f"{engine} delivery (insert -> client notified)",
+            label=f"{engine}: delivery",
         )
         ax.bar(
             positions + offset,
@@ -263,15 +290,15 @@ def make_breakdown_plot(breakdown: pd.DataFrame, output_dir: Path) -> None:
             color=colors[engine],
             alpha=0.45,
             hatch="//",
-            label=f"{engine} local (notified -> row read)",
+            label=f"{engine}: local",
         )
     ax.set_xticks(positions, [f"{level:g}" for level in levels])
-    ax.set_title("Median synchronization latency split into delivery and local part")
+    ax.set_title("Latency breakdown (medians)")
     ax.set_xlabel("Added downstream network latency (ms)")
     ax.set_ylabel("Median latency (ms)")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     ax.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
+    fig.subplots_adjust(**HALF_WIDTH_MARGINS)
     fig.savefig(output_dir / "latency-breakdown.png", dpi=180)
     plt.close(fig)
 
@@ -422,7 +449,8 @@ A positive slope means synchronization latency increased as the imposed server-t
 
 ## Visual aids
 
-- [Baseline latency distributions](latency-distributions.png)
+- [Baseline latency box plot](latency-boxplot.png)
+- [Baseline latency histogram](latency-histogram.png)
 - [Baseline latency by iteration](latency-by-iteration.png)
 - [Latency by simulated network latency](latency-by-network-latency.png)
 - [Latency breakdown](latency-breakdown.png)
