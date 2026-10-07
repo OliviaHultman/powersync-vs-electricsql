@@ -12,9 +12,8 @@ Install Node dependencies, then create the local PowerSync configuration once:
 ```sh
 npm ci
 cd experiments/powersync
-node generate-secrets.mjs > .env
-printf 'POWERSYNC_PG_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> .env
-printf 'POWERSYNC_STORAGE_PASSWORD=%s\n' "$(openssl rand -hex 32)" >> .env
+grep -v '^POWERSYNC_JWT_SECRET=' .env.example > .env
+node generate-secrets.mjs >> .env
 ```
 
 Start both engine stacks from the repository root:
@@ -59,9 +58,14 @@ measurement. The orchestrator removes the injected delay when a sweep ends.
 Analyze the latest CSV from each engine:
 
 ```sh
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r analysis/requirements.txt
 python analysis/analyze_latency.py
 ```
+
+The virtual environment only needs to be created and populated once. Next time,
+run `source .venv/bin/activate` before `python analysis/analyze_latency.py`.
 
 The analysis writes a summary by engine and network-delay level, baseline
 engine-comparison figures, and `latency-by-network-latency.png` plus a linear

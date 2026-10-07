@@ -88,6 +88,11 @@ function proxyConfig(engine: Engine): ProxyConfig {
   };
 }
 
+// Toxiproxy reports wildcard listeners as "[::]:port" even when configured as "0.0.0.0:port".
+function normalizeListen(listen: string): string {
+  return listen.replace(/^(\[::\]|0\.0\.0\.0):/, '*:');
+}
+
 async function ensureProxy(config: ProxyConfig): Promise<void> {
   const proxiesUrl = `${config.apiUrl}/proxies`;
   let response: Response | undefined;
@@ -114,7 +119,10 @@ async function ensureProxy(config: ProxyConfig): Promise<void> {
   >;
   const existing = proxies[config.name];
   if (existing) {
-    if (existing.listen !== config.listen || existing.upstream !== config.upstream) {
+    if (
+      normalizeListen(existing.listen) !== normalizeListen(config.listen) ||
+      existing.upstream !== config.upstream
+    ) {
       throw new Error(
         `Toxiproxy proxy ${config.name} has unexpected configuration (${existing.listen} -> ${existing.upstream})`
       );
