@@ -58,8 +58,9 @@ Both tests address the narrow question of whether the observed latency distribut
 
 A separate linear trend is estimated for each engine across all configured delay levels:
 
-- **PowerSync:** 0.992 ms additional synchronization latency per 1 ms imposed downstream delay (R² = 0.988, p = 0).
-- **ElectricSQL:** 1.050 ms additional synchronization latency per 1 ms imposed downstream delay (R² = 0.996, p = 0).
+- **PowerSync:** 0.992 ms additional synchronization latency per 1 ms imposed downstream delay, 95% CI [0.981, 1.003] (R² = 0.988).
+- **ElectricSQL:** 1.050 ms additional synchronization latency per 1 ms imposed downstream delay, 95% CI [1.043, 1.057] (R² = 0.996).
+- **Slope difference (ElectricSQL minus PowerSync):** 0.058 ms/ms, 95% CI [0.045, 0.070], z = 8.94, p = 3.91e-19.
 
 A positive slope means synchronization latency increased as the imposed server-to-client delay increased. This fixed downstream delay models the path on which synchronized changes reach the client; it is not a general model of Internet conditions.
 

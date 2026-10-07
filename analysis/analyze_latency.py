@@ -144,20 +144,27 @@ def make_plots(data: pd.DataFrame, network_data: pd.DataFrame, output_dir: Path)
 
     fig, ax = plt.subplots(figsize=(9, 5))
     for engine in order:
-        grouped = network_data.loc[network_data["engine"] == engine].groupby(
-            "network_latency_ms"
-        )["latency_ms"]
-        means = grouped.mean()
-        errors = grouped.sem().fillna(0)
-        ax.errorbar(
-            means.index,
-            means.values,
-            yerr=errors.values,
+        engine_data = network_data.loc[network_data["engine"] == engine]
+        grouped = engine_data.groupby("network_latency_ms")["latency_ms"]
+        medians = grouped.median()
+        q1 = grouped.quantile(0.25)
+        q3 = grouped.quantile(0.75)
+        slope = stats.linregress(engine_data["network_latency_ms"], engine_data["latency_ms"]).slope
+        ax.plot(
+            medians.index,
+            medians.values,
             marker=markers[engine],
-            capsize=4,
             linewidth=1.5,
-            label=engine,
+            label=f"{engine} median (slope {slope:.2f} ms/ms)",
             color=colors[engine],
+        )
+        ax.fill_between(
+            medians.index,
+            q1.values,
+            q3.values,
+            alpha=0.25,
+            color=colors[engine],
+            label=f"{engine} IQR",
         )
     ax.set_title("Synchronization latency by simulated network latency")
     ax.set_xlabel("Added downstream network latency (ms)")
@@ -189,14 +196,28 @@ def write_report(data: pd.DataFrame, summary: pd.DataFrame, paths: dict[str, Pat
         include_groups=False,
     )
     network_trends = []
+    slopes = {}
     for engine, group in data.groupby("engine", sort=False):
         if group["network_latency_ms"].nunique() < 2:
             network_trends.append(f"- **{engine}:** at least two network latency levels are required.")
             continue
         trend = stats.linregress(group["network_latency_ms"], group["latency_ms"])
+        t_critical = stats.t.ppf(0.975, len(group) - 2)
+        slopes[engine] = trend
         network_trends.append(
             f"- **{engine}:** {trend.slope:.3f} ms additional synchronization latency per "
-            f"1 ms imposed downstream delay (R² = {trend.rvalue**2:.3f}, p = {trend.pvalue:.6g})."
+            f"1 ms imposed downstream delay, 95% CI [{trend.slope - t_critical * trend.stderr:.3f}, "
+            f"{trend.slope + t_critical * trend.stderr:.3f}] (R² = {trend.rvalue**2:.3f})."
+        )
+    if len(slopes) == 2:
+        slope_difference = slopes["ElectricSQL"].slope - slopes["PowerSync"].slope
+        difference_se = np.sqrt(slopes["ElectricSQL"].stderr**2 + slopes["PowerSync"].stderr**2)
+        z = slope_difference / difference_se
+        p_difference = 2 * stats.norm.sf(abs(z))
+        network_trends.append(
+            f"- **Slope difference (ElectricSQL minus PowerSync):** {slope_difference:.3f} ms/ms, "
+            f"95% CI [{slope_difference - 1.96 * difference_se:.3f}, {slope_difference + 1.96 * difference_se:.3f}], "
+            f"z = {z:.2f}, p = {p_difference:.3g}."
         )
     network_trend_report = "\n".join(network_trends)
 
