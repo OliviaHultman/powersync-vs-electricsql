@@ -15,7 +15,7 @@ services:
       - ./init-powersync.sh:/docker-entrypoint-initdb.d/02-init-powersync.sh:ro
 
   powersync:
-    image: journeyapps/powersync-service:latest
+    image: journeyapps/powersync-service:1.27.2
     depends_on:
       - postgres
     environment:
